@@ -104,8 +104,9 @@ code-rag-mcp --http --port 8765
 ### `index_repo`
 
 ```
-repo_path   (str)   Absolute or ~ path to the repository root.
-incremental (bool)  Only reindex changed files. Default: true.
+repo_path    (str)              Absolute or ~ path to the repository root.
+incremental  (bool)             Only reindex changed files. Default: true.
+exclude_dirs (list[str] | null) Additional directory names to exclude from indexing (e.g. ["docs", "examples"]).
 ```
 
 ### `search_code`

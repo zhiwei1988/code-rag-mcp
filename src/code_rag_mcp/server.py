@@ -11,16 +11,17 @@ mcp = FastMCP("code-rag")
 
 
 @mcp.tool()
-def index_repo(repo_path: str, incremental: bool = True) -> dict:
+def index_repo(repo_path: str, incremental: bool = True, exclude_dirs: list[str] | None = None) -> dict:
     """Index or update a code repository for semantic search.
 
     Args:
         repo_path: Absolute or ~ path to the repository root.
         incremental: Only reindex changed files (default True).
+        exclude_dirs: Additional directory names to exclude from indexing (e.g. ["docs", "examples"]).
     """
     from .indexer import index_repo as _index
 
-    return _index(repo_path, incremental=incremental)
+    return _index(repo_path, incremental=incremental, exclude_dirs=exclude_dirs)
 
 
 @mcp.tool()

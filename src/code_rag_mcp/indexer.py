@@ -36,9 +36,10 @@ CHUNK_LINES = 128
 CHUNK_OVERLAP = 32
 
 
-def _is_excluded(path: Path) -> bool:
+def _is_excluded(path: Path, extra_exclude_dirs: set[str] | None = None) -> bool:
+    exclude = EXCLUDE_DIRS | extra_exclude_dirs if extra_exclude_dirs else EXCLUDE_DIRS
     for part in path.parts:
-        if part in EXCLUDE_DIRS:
+        if part in exclude:
             return True
     if path.suffix.lower() not in TEXT_EXTENSIONS:
         return True
@@ -147,6 +148,7 @@ def index_repo(
     repo_path: str,
     incremental: bool = True,
     file_glob: str | None = None,
+    exclude_dirs: list[str] | None = None,
 ) -> dict:
     """Scan repo_path, chunk files, embed and upsert into ChromaDB."""
     from . import embedder, store
@@ -170,7 +172,7 @@ def index_repo(
     # scan files
     all_files: list[Path] = []
     for f in repo.rglob("*"):
-        if f.is_file() and not _is_excluded(f.relative_to(repo)):
+        if f.is_file() and not _is_excluded(f.relative_to(repo), set(exclude_dirs) if exclude_dirs else None):
             if file_glob:
                 import fnmatch
                 if not fnmatch.fnmatch(f.name, file_glob):
