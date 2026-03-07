@@ -1,0 +1,25 @@
+[project]
+name = "code-rag-mcp"
+version = "0.1.0"
+description = "Code RAG MCP Server for semantic code search"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "chromadb>=0.5.0",
+    "fastembed>=0.4.0",
+    "watchdog>=4.0.0",
+    "httpx[socks]>=0.28.1",
+]
+
+[project.scripts]
+code-rag-mcp = "code_rag_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_rag_mcp"]
+
+[tool.uv]
+dev-dependencies = []
