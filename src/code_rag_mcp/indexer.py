@@ -78,21 +78,46 @@ def _sliding_window_chunks(lines: list[str], file_path: str) -> list[dict]:
     return chunks
 
 
-def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | None:
-    """Try tree-sitter chunking; returns None if unavailable."""
-    try:
-        from tree_sitter import Language, Parser
-        import tree_sitter_languages  # noqa: F401 - optional dependency
+# Mapping from lang name to the installable Python module name.
+# Only languages with an installed package will be available at runtime.
+_LANG_MODULE_MAP: dict[str, str] = {
+    "c": "tree_sitter_c",
+    "cpp": "tree_sitter_cpp",
+}
 
-        language = Language(tree_sitter_languages.get_language(lang))
+
+def _get_ts_language(lang: str):
+    """Return a tree-sitter Language object for *lang*, or None if unavailable."""
+    module_name = _LANG_MODULE_MAP.get(lang)
+    if module_name is None:
+        return None
+    try:
+        import importlib
+        from tree_sitter import Language
+        mod = importlib.import_module(module_name)
+        return Language(mod.language())
+    except Exception:
+        return None
+
+
+def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | None:
+    """Try tree-sitter chunking; returns None if unavailable or no nodes found."""
+    language = _get_ts_language(lang)
+    if language is None:
+        return None
+    try:
+        from tree_sitter import Parser
+
         parser = Parser(language)
         tree = parser.parse(content.encode())
 
-        NODE_TYPES = {"function_definition", "class_definition", "method_definition",
-                      "function_declaration", "class_declaration", "method_declaration",
-                      "impl_item", "fn_item"}
+        NODE_TYPES = {
+            "function_definition", "class_definition", "method_definition",
+            "function_declaration", "class_declaration", "method_declaration",
+            "impl_item", "fn_item",
+        }
 
-        chunks = []
+        chunks: list[dict] = []
         lines = content.splitlines(keepends=True)
 
         def visit(node):
@@ -120,11 +145,8 @@ def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | 
 
 
 _EXT_TO_LANG = {
-    ".py": "python", ".js": "javascript", ".ts": "typescript",
-    ".jsx": "javascript", ".tsx": "typescript",
-    ".go": "go", ".rs": "rust", ".c": "c", ".cpp": "cpp",
-    ".h": "c", ".hpp": "cpp", ".java": "java", ".rb": "ruby",
-    ".lua": "lua", ".cs": "c_sharp",
+    ".c": "c", ".h": "c",
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hxx": "cpp",
 }
 
 

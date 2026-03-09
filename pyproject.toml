@@ -11,6 +11,13 @@ dependencies = [
     "httpx[socks]>=0.28.1",
 ]
 
+[project.optional-dependencies]
+treesitter = [
+    "tree-sitter>=0.22.0",
+    "tree-sitter-c>=0.22.0",
+    "tree-sitter-cpp>=0.22.0",
+]
+
 [project.scripts]
 code-rag-mcp = "code_rag_mcp.server:main"
 
