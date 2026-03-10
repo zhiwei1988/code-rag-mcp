@@ -22,18 +22,18 @@ EXCLUDE_PATTERNS = [
     re.compile(r".*\.(lock|sum)$"),
     re.compile(r".*\.(png|jpg|jpeg|gif|bmp|ico|svg|pdf|zip|tar|gz|bin|exe|so|dylib|whl|egg)$"),
 ]
+# Only index file types supported by tree-sitter.
+# If you add a new tree-sitter language, add its extensions here AND in _EXT_TO_LANG.
 TEXT_EXTENSIONS = {
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
-    ".java", ".kt", ".swift", ".rb", ".php", ".cs", ".lua", ".sh", ".bash",
-    ".zsh", ".fish", ".vim", ".el", ".clj", ".hs", ".ml", ".ex", ".exs",
-    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-    ".html", ".css", ".scss", ".sass",
-    ".md", ".txt", ".rst",
-    ".sql",
+    # C / C++
+    ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx",
+    # Python
+    ".py",
+    # Shell (bash)
+    ".sh", ".bash", ".zsh",
+    # JavaScript
+    ".js", ".jsx", ".mjs",
 }
-
-CHUNK_LINES = 128
-CHUNK_OVERLAP = 32
 
 
 def _is_excluded(path: Path, extra_exclude_dirs: set[str] | None = None) -> bool:
@@ -53,29 +53,7 @@ def _file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()[:16]
 
 
-def _sliding_window_chunks(lines: list[str], file_path: str) -> list[dict]:
-    """Split into overlapping windows of CHUNK_LINES with CHUNK_OVERLAP."""
-    chunks = []
-    total = len(lines)
-    step = CHUNK_LINES - CHUNK_OVERLAP
-    start = 0
-    while start < total:
-        end = min(start + CHUNK_LINES, total)
-        chunk_lines = lines[start:end]
-        text = "".join(chunk_lines).strip()
-        if text:
-            chunks.append(
-                {
-                    "text": text,
-                    "file": file_path,
-                    "line_start": start + 1,
-                    "line_end": end,
-                }
-            )
-        if end >= total:
-            break
-        start += step
-    return chunks
+
 
 
 # Mapping from lang name to the installable Python module name.
@@ -83,6 +61,9 @@ def _sliding_window_chunks(lines: list[str], file_path: str) -> list[dict]:
 _LANG_MODULE_MAP: dict[str, str] = {
     "c": "tree_sitter_c",
     "cpp": "tree_sitter_cpp",
+    "python": "tree_sitter_python",
+    "bash": "tree_sitter_bash",
+    "javascript": "tree_sitter_javascript",
 }
 
 
@@ -112,9 +93,12 @@ def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | 
         tree = parser.parse(content.encode())
 
         NODE_TYPES = {
+            # C / C++
             "function_definition", "class_definition", "method_definition",
             "function_declaration", "class_declaration", "method_declaration",
             "impl_item", "fn_item",
+            # JavaScript
+            "arrow_function", "variable_declaration",
         }
 
         chunks: list[dict] = []
@@ -147,18 +131,20 @@ def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | 
 _EXT_TO_LANG = {
     ".c": "c", ".h": "c",
     ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hxx": "cpp",
+    ".py": "python",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
 }
 
 
 def _chunk_file(file_path: str, content: str) -> list[dict]:
+    """Chunk a file using tree-sitter. Returns [] for unsupported file types."""
     ext = Path(file_path).suffix.lower()
     lang = _EXT_TO_LANG.get(ext)
-    if lang:
-        chunks = _treesitter_chunks(content, file_path, lang)
-        if chunks:
-            return chunks
-    lines = content.splitlines(keepends=True)
-    return _sliding_window_chunks(lines, file_path)
+    if not lang:
+        return []  # unsupported file type — skip
+    chunks = _treesitter_chunks(content, file_path, lang)
+    return chunks if chunks else []
 
 
 def _chunk_id(file_path: str, line_start: int, line_end: int, file_hash: str) -> str:
