@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 from pathlib import Path
@@ -10,6 +11,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger("code_rag_mcp")
+
+MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
 
 # --- exclusion rules ---
 EXCLUDE_DIRS = {
@@ -77,7 +82,8 @@ def _get_ts_language(lang: str):
         from tree_sitter import Language
         mod = importlib.import_module(module_name)
         return Language(mod.language())
-    except Exception:
+    except Exception as err:
+        logger.warning("Failed to load ts lang %s: %s", lang, err)
         return None
 
 
@@ -124,7 +130,8 @@ def _treesitter_chunks(content: str, file_path: str, lang: str) -> list[dict] | 
 
         visit(tree.root_node)
         return chunks if chunks else None
-    except Exception:
+    except Exception as err:
+        logger.warning("Tree-sitter parse failed %s: %s", file_path, err)
         return None
 
 
@@ -174,8 +181,8 @@ def index_repo(
             results = collection.get(include=["metadatas"])
             for doc_id, meta in zip(results["ids"], results["metadatas"]):
                 existing[doc_id] = meta.get("file_hash", "")
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning("Failed to load existing metadata: %s", err)
 
     # scan files
     all_files: list[Path] = []
@@ -187,18 +194,66 @@ def index_repo(
                     continue
             all_files.append(f)
 
-    chunks_to_add: list[dict] = []
+    total_files = len(all_files)
+    logger.info("Indexing started: %d files to scan in %s", total_files, repo)
+
+    BATCH = 64
+    added = 0
     ids_seen: set[str] = set()
+    chunks_buffer: list[dict] = []
+    files_processed = 0
+
+    def _flush_batch(batch: list[dict]) -> int:
+        """Embed and upsert a batch with retry. Returns number of chunks added."""
+        texts = [c["text"] for c in batch]
+        for attempt in range(3):
+            try:
+                embeddings = embedder.embed_texts(texts)
+                collection.upsert(
+                    ids=[c["_id"] for c in batch],
+                    embeddings=embeddings,
+                    documents=texts,
+                    metadatas=[
+                        {
+                            "file": c["file"],
+                            "line_start": c["line_start"],
+                            "line_end": c["line_end"],
+                            "file_hash": c["_file_hash"],
+                            "repo_path": str(repo),
+                        }
+                        for c in batch
+                    ],
+                )
+                return len(batch)
+            except Exception as err:
+                logger.warning("Batch attempt %d failed: %s", attempt + 1, err)
+                if attempt == 2:
+                    logger.error("Batch permanently failed, skipping %d chunks", len(batch))
+        return 0
 
     for file_path in all_files:
+        files_processed += 1
+        if files_processed % 1000 == 0:
+            logger.info("Progress: %d/%d files", files_processed, total_files)
+
+        # file size check
+        try:
+            file_size = file_path.stat().st_size
+        except OSError:
+            continue
+        rel_path = str(file_path.relative_to(repo))
+        if file_size > MAX_FILE_SIZE:
+            logger.warning("Skipping oversized file %s (%d bytes)", rel_path, file_size)
+            continue
+
         try:
             raw = file_path.read_bytes()
             content = raw.decode("utf-8", errors="replace")
-        except Exception:
+        except Exception as err:
+            logger.warning("Failed to read %s: %s", rel_path, err)
             continue
 
         fhash = _file_hash(raw)
-        rel_path = str(file_path.relative_to(repo))
         chunks = _chunk_file(rel_path, content)
 
         for chunk in chunks:
@@ -208,40 +263,29 @@ def index_repo(
                 continue  # unchanged
             chunk["_id"] = cid
             chunk["_file_hash"] = fhash
-            chunks_to_add.append(chunk)
+            chunks_buffer.append(chunk)
+
+        # flush when buffer reaches BATCH size
+        while len(chunks_buffer) >= BATCH:
+            batch = chunks_buffer[:BATCH]
+            chunks_buffer = chunks_buffer[BATCH:]
+            added += _flush_batch(batch)
+
+    # flush remaining chunks
+    if chunks_buffer:
+        added += _flush_batch(chunks_buffer)
 
     # delete stale ids (files removed or chunks shifted)
     stale_ids = set(existing.keys()) - ids_seen
     if stale_ids:
         collection.delete(ids=list(stale_ids))
 
-    # embed and upsert in batches
-    BATCH = 64
-    added = 0
-    for i in range(0, len(chunks_to_add), BATCH):
-        batch = chunks_to_add[i : i + BATCH]
-        texts = [c["text"] for c in batch]
-        embeddings = embedder.embed_texts(texts)
-        collection.upsert(
-            ids=[c["_id"] for c in batch],
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=[
-                {
-                    "file": c["file"],
-                    "line_start": c["line_start"],
-                    "line_end": c["line_end"],
-                    "file_hash": c["_file_hash"],
-                    "repo_path": str(repo),
-                }
-                for c in batch
-            ],
-        )
-        added += len(batch)
+    logger.info("Indexing completed: %d files scanned, %d chunks added, %d stale deleted",
+                total_files, added, len(stale_ids))
 
     return {
         "repo_path": str(repo),
-        "files_scanned": len(all_files),
+        "files_scanned": total_files,
         "chunks_added": added,
         "chunks_deleted": len(stale_ids),
         "total_chunks": collection.count(),

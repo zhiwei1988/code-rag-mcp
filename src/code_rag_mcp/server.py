@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -88,7 +89,21 @@ def delete_repo_index(repo_path: str) -> dict:
     return {"deleted": ok, "repo_path": rp}
 
 
+def _setup_logging() -> None:
+    log_dir = Path("~/.local/share/code-rag/logs").expanduser()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_dir / "code_rag_mcp.log")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger = logging.getLogger("code_rag_mcp")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+
+
 def main():
+    _setup_logging()
     http_mode = "--http" in sys.argv
     if http_mode:
         port = 8765

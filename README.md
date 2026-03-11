@@ -9,13 +9,13 @@ Source Files
     │
     ▼
 File Scanner (indexer.py)
-    │  filter by extension / exclusion rules
+    │  filter by extension / exclusion rules / file size limit (2 MB)
     ▼
 Chunker
-    │  tree-sitter (function/class level)  ──fallback──▶  sliding window (128 lines, 32 overlap)
+    │  tree-sitter (function/class level, supported languages only)
     ▼
 Embedder (fastembed + BAAI/bge-small-en-v1.5, local ONNX)
-    │
+    │  batch embed + upsert with retry (3 attempts)
     ▼
 ChromaDB (persistent, one collection per repo)
     │
@@ -142,13 +142,26 @@ repo_path  (str)  Path to the repository root.
 
 ## Chunking Strategy
 
-For languages with tree-sitter support (Python, JS/TS, Go, Rust, C/C++, Java, Ruby, Lua, C#), the indexer extracts top-level functions, classes, and methods as individual chunks. This preserves semantic boundaries and keeps each chunk self-contained.
+The indexer uses tree-sitter to extract top-level functions, classes, and methods as individual chunks. This preserves semantic boundaries and keeps each chunk self-contained. Files in unsupported languages are skipped.
 
-For all other file types, or when tree-sitter is unavailable, the indexer falls back to a **sliding window** of 128 lines with a 32-line overlap between adjacent chunks, ensuring no context is lost at chunk boundaries.
+Supported languages and extensions:
 
-Supported languages for tree-sitter chunking:
+| Language | Extensions |
+|---|---|
+| Python | `.py` |
+| C | `.c` `.h` |
+| C++ | `.cpp` `.cc` `.cxx` `.hpp` `.hxx` |
+| JavaScript | `.js` `.jsx` `.mjs` |
+| Bash | `.sh` `.bash` `.zsh` |
 
-`.py` `.js` `.ts` `.jsx` `.tsx` `.go` `.rs` `.c` `.cpp` `.h` `.hpp` `.java` `.rb` `.lua` `.cs`
+## Stability for Large Repos
+
+The indexer is designed to handle repositories with 30,000+ files reliably:
+
+- **File size limit** — Files larger than 2 MB are skipped automatically to avoid memory spikes or parser hangs.
+- **Streaming batch processing** — Chunks are embedded and upserted as soon as a batch (64 chunks) is ready, instead of accumulating all chunks in memory first.
+- **Retry on failure** — Each embed + upsert batch is retried up to 3 times before being skipped, preventing transient errors from aborting the entire indexing run.
+- **Structured logging** — All errors and progress are logged via Python's `logging` module under the `code_rag_mcp` logger. Progress is reported every 1,000 files.
 
 ## License
 
